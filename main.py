@@ -23,14 +23,16 @@ DATA_FILE = "data.txt"
 user_passwords = {}
 user_memo = {}
 
-# ✅ Load existing data
+# ✅ Load existing data safely
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         for line in f:
             parts = line.strip().split()
-            if parts[0] == "U":
+            if not parts:
+                continue  # skip empty lines
+            if parts[0] == "U" and len(parts) == 3:
                 user_passwords[parts[1]] = parts[2]
-            elif parts[0] == "M":
+            elif parts[0] == "M" and len(parts) == 4:
                 user_memo.setdefault(parts[1], {})[parts[2]] = parts[3]
 
 def crypt(s: str) -> str:
