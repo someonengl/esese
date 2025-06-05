@@ -13,7 +13,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ✅ Allow GET / to confirm server is running
 @app.get("/")
 async def root():
     return {"message": "Backend is running"}
@@ -23,13 +22,13 @@ DATA_FILE = "data.txt"
 user_passwords = {}
 user_memo = {}
 
-# ✅ Load existing data safely
+# ✅ Load data safely
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         for line in f:
             parts = line.strip().split()
             if not parts:
-                continue  # skip empty lines
+                continue
             if parts[0] == "U" and len(parts) == 3:
                 user_passwords[parts[1]] = parts[2]
             elif parts[0] == "M" and len(parts) == 4:
@@ -57,49 +56,50 @@ class UserInput(BaseModel):
     key: str = ""
     value: str = ""
 
-# ✅ Main POST endpoint
 @app.post("/")
 async def handle(req: UserInput):
-    u = req.username
-    p = req.password
-    k = req.key
-    v = req.value
+    u = req.username.strip()
+    p = req.password.strip()
+    k = req.key.strip()
+    v = req.value.strip()
 
     if req.action == "register":
+        if not u or not p:
+            return {"success": False, "message": "Username and password are required."}
         if u in user_passwords:
-            return {"status": "error", "message": "Username exists"}
+            return {"success": False, "message": f"User '{u}' already exists."}
         user_passwords[u] = p
         user_memo[u] = {}
         save_data()
-        return {"status": "ok", "message": "Registered"}
+        return {"success": True, "message": f"User '{u}' registered successfully."}
 
     if req.action == "login":
         if user_passwords.get(u) == p:
-            return {"status": "ok", "message": "Login success"}
-        return {"status": "error", "message": "Invalid login"}
+            return {"success": True, "message": f"Welcome, {u}!"}
+        return {"success": False, "message": "Incorrect username or password."}
 
     if req.action == "save":
         if k in user_memo.get(u, {}):
-            return {"status": "error", "message": "Key exists"}
+            return {"success": False, "message": f"The key '{k}' already exists."}
         h = crypt(k)
         user_memo.setdefault(u, {})[k] = h
         user_memo[u][h] = k
         save_data()
-        return {"status": "ok", "message": "Saved"}
+        return {"success": True, "message": f"Key '{k}' saved."}
 
     if req.action == "renew":
         if k not in user_memo.get(u, {}):
-            return {"status": "error", "message": "Key not found"}
+            return {"success": False, "message": f"Key '{k}' not found."}
         h = crypt(k)
         user_memo[u][k] = h
         user_memo[u][h] = k
         save_data()
-        return {"status": "ok", "message": "Renewed"}
+        return {"success": True, "message": f"Key '{k}' renewed."}
 
     if req.action == "give":
         val = user_memo.get(u, {}).get(v)
         if val:
-            return {"status": "ok", "result": val}
-        return {"status": "error", "message": "Not found"}
+            return {"success": True, "result": val}
+        return {"success": False, "message": f"No value found for key '{v}'."}
 
-    return {"status": "error", "message": "Unknown action"}
+    return {"success": False, "message": "Unknown action."}
