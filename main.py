@@ -5,7 +5,7 @@ import time, random, os
 
 app = FastAPI()
 
-# ✅ Enable CORS
+# ✅ Enable CORS for all domains
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,23 +17,24 @@ app.add_middleware(
 async def root():
     return {"message": "Backend is running"}
 
-# Storage
+# 📁 Storage
 DATA_FILE = "data.txt"
 user_passwords = {}
 user_memo = {}
 
-# ✅ Load data safely
+# ✅ Load existing data safely
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         for line in f:
             parts = line.strip().split()
             if not parts:
-                continue
+                continue  # skip empty lines
             if parts[0] == "U" and len(parts) == 3:
                 user_passwords[parts[1]] = parts[2]
             elif parts[0] == "M" and len(parts) == 4:
                 user_memo.setdefault(parts[1], {})[parts[2]] = parts[3]
 
+# 🔐 Simple hashing function
 def crypt(s: str) -> str:
     seed = time.time() + random.random()
     res = 0
@@ -41,6 +42,7 @@ def crypt(s: str) -> str:
         res = ord(c) + (res << 4) + (res << 10) - res + (ord(c) ^ res) + int(seed)
     return str(res)
 
+# 💾 Save all data back to file
 def save_data():
     with open(DATA_FILE, "w") as f:
         for u, p in user_passwords.items():
@@ -49,6 +51,7 @@ def save_data():
             for k, v in memos.items():
                 f.write(f"M {u} {k} {v}\n")
 
+# 🛠️ User input model
 class UserInput(BaseModel):
     action: str
     username: str
@@ -67,7 +70,7 @@ async def handle(req: UserInput):
         if not u or not p:
             return {"success": False, "message": "Username and password are required."}
         if u in user_passwords:
-            return {"success": False, "message": f"User '{u}' already exists."}
+            return {"success": False, "exists": True, "message": f"User '{u}' already exists."}
         user_passwords[u] = p
         user_memo[u] = {}
         save_data()
