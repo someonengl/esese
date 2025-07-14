@@ -1,11 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import time, random, os
+import time, random, os, asyncio
 
 app = FastAPI()
 
-# --- CORS (open for testing) -------------------------------------------
+# --- Enable CORS ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,16 +13,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def root():
-    return {"message": "Backend is running"}
-
-# --- Storage ------------------------------------------------------------
+# --- Data storage ---
 DATA_FILE = "data.txt"
 user_passwords: dict[str, str] = {}              # username -> password
 user_memo: dict[str, dict[str, str]] = {}        # username -> {key: value}
 
-# ---- Load everything on startup ----------------------------------------
+# --- Load everything on startup ---
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         for raw in f:
@@ -35,13 +31,12 @@ if os.path.exists(DATA_FILE):
             elif tag == "M" and len(parts) == 4:
                 user_memo.setdefault(parts[1], {})[parts[2]] = parts[3]
 
-# ---- Append helper (never rewrites the file) ---------------------------
+# --- Append helper ---
 def record(line: str) -> None:
-    """Persist a single line to data.txt"""
     with open(DATA_FILE, "a") as f:
         f.write(line)
 
-# ---- Simple hashing (opaque one-way, non-cryptographic) ----------------
+# --- Simple pseudo-hash ---
 def crypt(s: str) -> str:
     seed = time.time() + random.random()
     res = 0
@@ -49,7 +44,22 @@ def crypt(s: str) -> str:
         res = ord(c) + (res << 4) + (res << 10) - res + (ord(c) ^ res) + int(seed)
     return str(res)
 
-# ---- Request schema ----------------------------------------------------
+# --- Heartbeat to keep app alive ---
+@app.on_event("startup")
+async def keep_alive():
+    async def heartbeat():
+        while True:
+            await asyncio.sleep(45)
+            _ = os.path.exists(DATA_FILE)  # Do something trivial
+            print("[Heartbeat] App is still running.")
+    asyncio.create_task(heartbeat())
+
+# --- Root route ---
+@app.get("/")
+async def root():
+    return {"message": "Backend is running"}
+
+# --- Request schema ---
 class UserInput(BaseModel):
     action: str
     username: str
@@ -57,12 +67,11 @@ class UserInput(BaseModel):
     key: str = ""
     value: str = ""
 
-# ---- Main endpoint -----------------------------------------------------
+# --- Main POST handler ---
 @app.post("/")
 async def handle(req: UserInput):
     u, p, k, v = req.username.strip(), req.password.strip(), req.key.strip(), req.value.strip()
 
-    # -------- REGISTER --------
     if req.action == "register":
         if not u or not p:
             return {"success": False, "message": "Username and password are required."}
@@ -73,13 +82,11 @@ async def handle(req: UserInput):
         record(f"U {u} {p}\n")
         return {"success": True, "message": f"User '{u}' registered successfully."}
 
-    # -------- LOGIN --------
     if req.action == "login":
         if user_passwords.get(u) == p:
             return {"success": True, "message": f"Welcome, {u}!"}
         return {"success": False, "message": "Incorrect username or password."}
 
-    # -------- SAVE NEW MEMO --------
     if req.action == "save":
         if k in user_memo.get(u, {}):
             return {"success": False, "message": f"The key '{k}' already exists."}
@@ -90,7 +97,6 @@ async def handle(req: UserInput):
         record(f"M {u} {h} {k}\n")
         return {"success": True, "message": f"Key '{k}' saved."}
 
-    # -------- RENEW MEMO --------
     if req.action == "renew":
         if k not in user_memo.get(u, {}):
             return {"success": False, "message": f"Key '{k}' not found."}
@@ -101,7 +107,6 @@ async def handle(req: UserInput):
         record(f"M {u} {h} {k}\n")
         return {"success": True, "message": f"Key '{k}' renewed."}
 
-    # -------- RETRIEVE MEMO --------
     if req.action == "give":
         val = user_memo.get(u, {}).get(v)
         if val:
