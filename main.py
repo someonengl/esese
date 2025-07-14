@@ -5,7 +5,7 @@ import time, random, os
 
 app = FastAPI()
 
-# ✅ Enable CORS for all domains
+# --- CORS (open for testing) -------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,24 +17,31 @@ app.add_middleware(
 async def root():
     return {"message": "Backend is running"}
 
-# 📁 Storage
+# --- Storage ------------------------------------------------------------
 DATA_FILE = "data.txt"
-user_passwords = {}
-user_memo = {}
+user_passwords: dict[str, str] = {}              # username -> password
+user_memo: dict[str, dict[str, str]] = {}        # username -> {key: value}
 
-# ✅ Load existing data safely
+# ---- Load everything on startup ----------------------------------------
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
-        for line in f:
-            parts = line.strip().split()
+        for raw in f:
+            parts = raw.rstrip("\n").split(" ", 3)
             if not parts:
-                continue  # skip empty lines
-            if parts[0] == "U" and len(parts) == 3:
+                continue
+            tag = parts[0]
+            if tag == "U" and len(parts) == 3:
                 user_passwords[parts[1]] = parts[2]
-            elif parts[0] == "M" and len(parts) == 4:
+            elif tag == "M" and len(parts) == 4:
                 user_memo.setdefault(parts[1], {})[parts[2]] = parts[3]
 
-# 🔐 Simple hashing function
+# ---- Append helper (never rewrites the file) ---------------------------
+def record(line: str) -> None:
+    """Persist a single line to data.txt"""
+    with open(DATA_FILE, "a") as f:
+        f.write(line)
+
+# ---- Simple hashing (opaque one-way, non-cryptographic) ----------------
 def crypt(s: str) -> str:
     seed = time.time() + random.random()
     res = 0
@@ -42,16 +49,7 @@ def crypt(s: str) -> str:
         res = ord(c) + (res << 4) + (res << 10) - res + (ord(c) ^ res) + int(seed)
     return str(res)
 
-# 💾 Save all data back to file
-def save_data():
-    with open(DATA_FILE, "w") as f:
-        for u, p in user_passwords.items():
-            f.write(f"U {u} {p}\n")
-        for u, memos in user_memo.items():
-            for k, v in memos.items():
-                f.write(f"M {u} {k} {v}\n")
-
-# 🛠️ User input model
+# ---- Request schema ----------------------------------------------------
 class UserInput(BaseModel):
     action: str
     username: str
@@ -59,13 +57,12 @@ class UserInput(BaseModel):
     key: str = ""
     value: str = ""
 
+# ---- Main endpoint -----------------------------------------------------
 @app.post("/")
 async def handle(req: UserInput):
-    u = req.username.strip()
-    p = req.password.strip()
-    k = req.key.strip()
-    v = req.value.strip()
+    u, p, k, v = req.username.strip(), req.password.strip(), req.key.strip(), req.value.strip()
 
+    # -------- REGISTER --------
     if req.action == "register":
         if not u or not p:
             return {"success": False, "message": "Username and password are required."}
@@ -73,32 +70,38 @@ async def handle(req: UserInput):
             return {"success": False, "exists": True, "message": f"User '{u}' already exists."}
         user_passwords[u] = p
         user_memo[u] = {}
-        save_data()
+        record(f"U {u} {p}\n")
         return {"success": True, "message": f"User '{u}' registered successfully."}
 
+    # -------- LOGIN --------
     if req.action == "login":
         if user_passwords.get(u) == p:
             return {"success": True, "message": f"Welcome, {u}!"}
         return {"success": False, "message": "Incorrect username or password."}
 
+    # -------- SAVE NEW MEMO --------
     if req.action == "save":
         if k in user_memo.get(u, {}):
             return {"success": False, "message": f"The key '{k}' already exists."}
         h = crypt(k)
         user_memo.setdefault(u, {})[k] = h
         user_memo[u][h] = k
-        save_data()
+        record(f"M {u} {k} {h}\n")
+        record(f"M {u} {h} {k}\n")
         return {"success": True, "message": f"Key '{k}' saved."}
 
+    # -------- RENEW MEMO --------
     if req.action == "renew":
         if k not in user_memo.get(u, {}):
             return {"success": False, "message": f"Key '{k}' not found."}
         h = crypt(k)
         user_memo[u][k] = h
         user_memo[u][h] = k
-        save_data()
+        record(f"M {u} {k} {h}\n")
+        record(f"M {u} {h} {k}\n")
         return {"success": True, "message": f"Key '{k}' renewed."}
 
+    # -------- RETRIEVE MEMO --------
     if req.action == "give":
         val = user_memo.get(u, {}).get(v)
         if val:
